@@ -7,13 +7,14 @@ const { prisma } = require('../prisma/client');
 const signupSchema = z.object({
   email: z.string().email('Invalid email address'),
   password: z.string().min(6, 'Password must be at least 6 characters'),
-  role: z.enum(['PATIENT', 'CAREGIVER']),
+  role: z.enum(['PATIENT', 'CAREGIVER', 'DOCTOR']),
   firstName: z.string().optional(),
   lastName: z.string().optional(),
   phone: z.string().optional(),
   dateOfBirth: z.string().optional(),
   address: z.string().optional(),
   licenseNumber: z.string().optional(),
+  specialization: z.string().optional(),
 });
 
 const signinSchema = z.object({
@@ -87,6 +88,17 @@ const signup = async (req, res) => {
             licenseNumber: validatedData.licenseNumber,
           },
         });
+      } else if (validatedData.role === 'DOCTOR') {
+        await tx.doctor.create({
+          data: {
+            userId: user.id,
+            firstName: validatedData.firstName,
+            lastName: validatedData.lastName,
+            phone: validatedData.phone,
+            licenseNumber: validatedData.licenseNumber,
+            specialization: validatedData.specialization,
+          },
+        });
       }
 
       return user;
@@ -136,6 +148,7 @@ const signin = async (req, res) => {
       include: {
         patient: true,
         caregiver: true,
+        doctor: true,
       },
     });
 
@@ -173,6 +186,8 @@ const signin = async (req, res) => {
       userData.profile = user.patient;
     } else if (user.role === 'CAREGIVER' && user.caregiver) {
       userData.profile = user.caregiver;
+    } else if (user.role === 'DOCTOR' && user.doctor) {
+      userData.profile = user.doctor;
     }
 
     // Return success response

@@ -17,6 +17,32 @@ services:
       timeout: 5s
       retries: 5
 
+  ml:
+    build:
+      context: ..
+      dockerfile: ml/Dockerfile
+    container_name: alertcare-ml
+    restart: unless-stopped
+    environment:
+      # Database connection for ML service
+      DATABASE_URL: postgresql://alertcare:alertcare_password@postgres:5432/alertcare_db
+      # ML service configuration
+      ML_API_PORT: 8000
+      # IMPORTANT: model store is separate from Python `models/` package
+      ML_MODEL_PATH: /app/model_store
+      ML_OUTPUT_PATH: /app/output
+    ports:
+      - "8000:8000"  # ML API port
+    volumes:
+      - ../ml/output:/app/output
+      # Persisted model artifacts (does NOT shadow source code)
+      - ml_models:/app/model_store
+    depends_on:
+      postgres:
+        condition: service_healthy
+    
+
 volumes:
   postgres_data:
+  ml_models:  # Persistent volume for ML models
 

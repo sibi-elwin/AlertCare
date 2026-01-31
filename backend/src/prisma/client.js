@@ -1,7 +1,9 @@
+
+require('dotenv').config();
 const pg = require('pg');
 const { PrismaPg } = require('@prisma/adapter-pg');
 const { PrismaClient } = require('@prisma/client');
-
+console.log("Database URL check:", process.env.DATABASE_URL ? "Defined" : "UNDEFINED ❌");
 // 1. Setup the standard PostgreSQL driver
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 

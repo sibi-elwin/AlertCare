@@ -13,6 +13,7 @@ datasource db {
 enum UserRole {
   PATIENT
   CAREGIVER
+  DOCTOR
 }
 
 model User {
@@ -25,6 +26,7 @@ model User {
 
   patient   Patient?
   caregiver Caregiver?
+  doctor    Doctor?
 
   @@map("users")
 }
@@ -40,7 +42,16 @@ model Patient {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sensorReadings  SensorReading[]
+  predictions     HealthPrediction[]
+  
+  // Relationships
+  caregiverAssignments CaregiverAssignment[]
+  doctorAssignments   DoctorAssignment[]
+  guidance            CareTeamGuidance[]
+  caregiverNotes      CaregiverNote[]
+  flags               PatientFlag[]
 
   @@map("patients")
 }
@@ -56,7 +67,201 @@ model Caregiver {
   updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Relationships
+  assignments CaregiverAssignment[]
+  notes        CaregiverNote[]
+  flags        PatientFlag[]
+  guidance     CareTeamGuidance[]
 
   @@map("caregivers")
+}
+
+model Doctor {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  firstName String?
+  lastName  String?
+  phone     String?
+  licenseNumber String?
+  specialization String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Relationships
+  assignments DoctorAssignment[]
+  guidance    CareTeamGuidance[]
+  flags       PatientFlag[]
+
+  @@map("doctors")
+}
+
+// Sensor Reading - Raw wearable device data
+model SensorReading {
+  id            String   @id @default(uuid())
+  patientId     String
+  timestamp     DateTime @default(now())
+  bloodPressure Float?   // Systolic blood pressure (mmHg)
+  bloodGlucose  Float?   // Blood glucose level (mg/dL)
+  heartRate     Float?   // Heart rate (bpm)
+  activity      Float?   // Activity level (steps/hour equivalent)
+  createdAt     DateTime @default(now())
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  prediction HealthPrediction?  // One-to-one relationship
+
+  @@index([patientId, timestamp])
+  @@index([timestamp])
+  @@map("sensor_readings")
+}
+
+// Health Prediction - ML model predictions and scores
+model HealthPrediction {
+  id                    String   @id @default(uuid())
+  sensorReadingId       String   @unique
+  patientId             String
+  timestamp             DateTime @default(now())
+  
+  // ML Model Scores (0-100 scale)
+  healthStabilityScore  Float    // Main fused score (0-100, higher = more stable)
+  isolationScore        Float    // Isolation Forest score (0-100)
+  lstmScore             Float    // LSTM Autoencoder score (0-100)
+  reconstructionError   Float?   // LSTM reconstruction error (MSE)
+  
+  // Risk categorization
+  riskCategory          String   // Stable, Early Instability, Sustained Deterioration, High-Risk Decline
+  
+  // Metadata
+  modelVersion          String?  @default("1.0")
+  createdAt             DateTime @default(now())
+
+  sensorReading SensorReading @relation(fields: [sensorReadingId], references: [id], onDelete: Cascade)
+  patient       Patient        @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, timestamp])
+  @@index([riskCategory])
+  @@index([healthStabilityScore])
+  @@map("health_predictions")
+}
+
+// Model Training Record - Track ML model training sessions
+model ModelTraining {
+  id              String   @id @default(uuid())
+  modelType       String   // "lstm_autoencoder" or "isolation_forest"
+  trainingDataStart DateTime
+  trainingDataEnd   DateTime
+  trainingDuration  Int?    // Duration in seconds
+  epochs           Int?     // For LSTM
+  batchSize        Int?     // For LSTM
+  validationLoss   Float?   // Final validation loss
+  modelVersion     String   @default("1.0")
+  modelPath        String?  // Path to saved model
+  status           String   @default("completed") // completed, failed, in_progress
+  createdAt        DateTime @default(now())
+  completedAt      DateTime?
+
+  @@index([modelType, createdAt])
+  @@map("model_trainings")
+}
+
+// Caregiver-Patient Assignment (Many-to-Many)
+model CaregiverAssignment {
+  id          String   @id @default(uuid())
+  patientId   String
+  caregiverId String
+  assignedBy  String?  // Doctor ID who assigned
+  assignedAt  DateTime @default(now())
+  status      String   @default("active") // "active", "inactive"
+  notes       String?
+  
+  patient     Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  caregiver   Caregiver @relation(fields: [caregiverId], references: [id], onDelete: Cascade)
+  
+  @@unique([patientId, caregiverId])
+  @@index([caregiverId])
+  @@index([patientId])
+  @@map("caregiver_assignments")
+}
+
+// Doctor-Patient Assignment (Many-to-Many)
+model DoctorAssignment {
+  id          String   @id @default(uuid())
+  patientId   String
+  doctorId    String
+  selectedAt  DateTime @default(now())
+  status      String   @default("active") // "active", "inactive", "pending"
+  notes       String?
+  
+  patient     Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor      Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  
+  @@unique([patientId, doctorId])
+  @@index([doctorId])
+  @@index([patientId])
+  @@map("doctor_assignments")
+}
+
+// Care Team Guidance - Messages from doctors/caregivers to patients
+model CareTeamGuidance {
+  id          String   @id @default(uuid())
+  patientId   String
+  caregiverId String?
+  doctorId    String?
+  message     String
+  priority    String   @default("normal") // "low", "normal", "high"
+  acknowledged Boolean @default(false)
+  acknowledgedAt DateTime?
+  createdAt   DateTime @default(now())
+  
+  patient     Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  caregiver   Caregiver? @relation(fields: [caregiverId], references: [id], onDelete: SetNull)
+  doctor      Doctor?    @relation(fields: [doctorId], references: [id], onDelete: SetNull)
+  
+  @@index([patientId, createdAt])
+  @@index([acknowledged])
+  @@map("care_team_guidance")
+}
+
+// Caregiver Notes - Clinical observations
+model CaregiverNote {
+  id          String   @id @default(uuid())
+  patientId   String
+  caregiverId String
+  content     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  patient     Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  caregiver   Caregiver @relation(fields: [caregiverId], references: [id], onDelete: Cascade)
+  
+  @@index([patientId, createdAt])
+  @@index([caregiverId])
+  @@map("caregiver_notes")
+}
+
+// Patient Flags - Flag patients for clinical review
+model PatientFlag {
+  id          String   @id @default(uuid())
+  patientId   String
+  caregiverId String?
+  doctorId    String?
+  reason      String
+  priority    String   // "low", "medium", "high", "urgent"
+  status      String   @default("pending") // "pending", "reviewed", "resolved"
+  notes       String?
+  createdAt   DateTime @default(now())
+  reviewedAt DateTime?
+  resolvedAt DateTime?
+  
+  patient     Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  caregiver   Caregiver? @relation(fields: [caregiverId], references: [id], onDelete: SetNull)
+  doctor      Doctor?    @relation(fields: [doctorId], references: [id], onDelete: SetNull)
+  
+  @@index([patientId, status])
+  @@index([priority, status])
+  @@index([status])
+  @@map("patient_flags")
 }
 
